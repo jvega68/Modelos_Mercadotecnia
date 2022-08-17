@@ -1,0 +1,447 @@
+---
+title: 'Clase 3: Series de tiempo'
+author: "Jorge de la Vega"
+date: "13/10/2021"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NULL, fig.align = "center")
+```
+
+# Series de tiempo: Modelos de descomposición (continuación )
+
+Como hemos comentado, a partir de los métodos de suavizamiento se crean
+pronósticos combinando información dela última observación de los datos
+con la estimación de los componentes proyectados de la serie, tal como
+el componente estacional o el de tendencia.
+
+-   Ya vimos que los **promedios móviles** sirven para separar la señal
+    del ruido de una serie.
+
+-   Vimos que los métodos de descomposición consideran a las series de
+    tiempo como una combinación de cuatro componentes (o tres):
+
+    -   Tendencia
+    -   Estacionalidad
+    -   Ciclo
+    -   Error
+
+y que la descomposición se puede hacer de manera **lineal** o
+**multiplicativa**.
+
+Ahora consideraremos una amplicación de modelos que hace una
+descomposición ligeramente diferente, introduciendo el concepto de
+**nivel o base** (que en realidad es parte de la tendencia):
+
+-   En un modelo aditivo, el nivel es como la constante $a$ en un modelo
+    de regresión de la forma $a + b\times t$ y representa el nivel al
+    inicio del periodo. La tendencia se asocia con la pendiente $b$ e
+    indica la tasa de crecimiento por unidad de tiempo.
+-   En un modelo multiplicativo, el nivel se asocia con la constante $a$
+    y la tendencia con la constante $b$ en un modelo de la forma $at^b$.
+
+## Método de Holt-Winters
+
+A diferencia de otros métodos, el método de Holt-Winters se basa en el
+suavizamiento exponencial e incorpora tanto factores de tendencia como
+de estacionalidad.
+
+Como los factores estacionales cambian constantemente en muchas de las
+series de tiempo, los método generales como el de Holt-Winters, que
+permite actualizar los coeficientes estimados durante cada periodo,
+serán mejores que los métodos que mantienen constantes esos valores. La
+elección del método a aplicar dependerá del análisis preeliminar que
+hagan de las serie de tiempo que estén analizando.
+
+El modelo de Holt-Winters considera tres características de la serie de
+tiempo:
+
+-   $L_t$ = nivel (o base)
+-   $T_t$ = tendencia
+-   $S_t$ = componente estacional
+
+Se tienen 4 ecuaciones (versión multiplicativa) y tres parámetros (se
+muestra el modelo multiplicativo primero y el aditivo en paréntesis):
+
+(1) M:
+    $L_t = \alpha \frac{y_t}{S_{t-s}} +(1-\alpha)(L_{t-1}\cdot T_{t-1})$
+        A: (
+    $L_t = \alpha \frac{y_t}{S_{t-s}} +(1-\alpha)(L_{t-1} + T_{t-1})$ )
+(2) M: $T_t = \beta(\frac{L_t}{L_{t-1}}) + (1-\beta)T_{t-1}$     A: (
+    $T_t = \beta(L_t - L_{t-1}) + (1-\beta)T_{t-1}$ )
+(3) M: $S_t = \gamma(\frac{y_t}{L_t}) + (1-\gamma)S_{t-s}$     A: (
+    $S_t = \gamma(\frac{y_t}{L_t}) + (1-\gamma)S_{t-s}$ )
+
+donde $s$ es la longitud de la estacionalidad
+
+La ecuación 1 indica que el estimado del nuevo nivel es un promedio
+ponderado de la observaciòn actual (desestacionalizada) y el nivel del
+último periodo, actualizado por la última tendencia disponible.
+
+La ecuación 2 indica que el nuevo estimador de la tendencia es un
+promedio ponderado de la razón del nivel actual al nivel del periodo
+anterior (esto da un nuevo estimador de tendencia) y la tendencia del
+último periodo.
+
+La ecuación 3 indica que el nuevo factor estacional es un promedio
+ponderado del estimado del factor estacional basado en el periodo actual
+y el estimado previo.
+
+Se puede definir el pronóstico $F_{t+k} = L_t\cdot T_t^kS_{t+k-s}$ (para
+el aditivo: $F_{t+k} = (L_t + k\times T_t)\cdot S_{t+k-s}$ ).
+
+El método de Holt-Winters requiere definir condiciones de inicialización
+de los componentes $L_t$, $T_t$ y los índices estacionales $S_t$.
+Podemos seguir por ejemplo, este procedimiento:
+
+-   $S_t$: requiere los datos completos de todo un periodo estacional
+-   $L_t$: se calcula el valor para $s$ como un promedio de $s$
+    observaciones: $L_s = \frac{1}{s}(y_1 + \cdots + y_s)$.
+-   $T_t$: se calcula el valor para $s$:
+    $T_s = \frac{1}{s}(\frac{y_{s+1} - y_1}{s} + \cdots + \frac{y_{2s} - y_s}{s})$.
+-   Los valores de $\alpha, \beta$ y $\gamma$ se eligen de tal forma que
+    minimicen el error cuadrático medio (MSE) o alguna otra medida de
+    error.
+
+### Ejemplo
+
+Aquí usaremos datos que corresponden a millas mensuales recorridas por
+líneas aéreas en los EEUU que están en el archivo `airlines HW.xls` para
+comparar los resultados en Excel y en R. Los datos de pasajeros muestran
+una tendencia y un factor estacional.
+
+```{r}
+ruta <- "/home/jvega/Dropbox/Academia/ITAM/2021-II/Modelos de Mercadotecnia/data/"
+library(readxl)
+y <- readxl::read_xls("../data/airlines HW.xls", sheet = "datos", range = "B1:B113")
+y <- readxl::read_xls(paste0(ruta,"airlines HW.xls"), sheet = "datos", range = "B1:B113")
+y <- ts(y, start=c(2003,01), freq=12)
+plot(y)
+```
+
+En R, la función `HoltWinters` permite definir un ajuste considerando un
+modelo aditivo o multiplicativo en la parte estacional.
+
+```{r}
+m1 <- HoltWinters(y,seasonal = "multiplicative")
+names(m1) # son los componentes que se crean
+head(m1$fitted) # podemos ver los componentes estimados
+c(m1$alpha, m1$beta, m1$gamma) # podemos ver los parámtros estimados
+plot(m1) # muestra el ajuste y los datos originales
+```
+
+Una gráfica de los componentes estimados de la serie:
+
+```{r}
+plot(fitted(m1))
+```
+
+Para obtener finalmente el pronóstico de $k=10$ periodos:
+
+```{r}
+pron <- predict(m1,n.ahead = 20,prediction.interval = T)
+pron
+```
+
+Otra opción es usar el paquete forecast para obtener una mejor gráfica
+de los pronósticos e intervalos de confianza, aunque es importante notar
+que los resultados pueden diferir debido a que los programas usan
+diferentes condiciones de inicialización.
+
+```{r}
+library(forecast)
+m2 <- hw(y,h = 10)
+names(m2) # componentes del modelo estimado Tiene diferentes conceptos del modelo previo.
+plot(m2)
+hist(m2$residuals) # histograma de los residuales. 
+plot(m2$residuals)
+acf(m2$residuals)
+```
+
+Podemos comparar los pronósticos a través de las medidas de desempeño
+que mencionamos la clase anterior (y que están e las notas).
+
+```{r}
+accuracy(m2) # toma los datos del modelo como el conjunto completo y calcula los errores del propio modelo.
+accuracy(m2, x=pron[1:10])  # tomo los pronósticos generados con el primer modelo como si fueran los datos observados
+accuracy(m2, x=1:10)  # tomo los pronósticos generados con el primer modelo como si fueran los datos observados
+m3 <- naive(y,h = 10)
+accuracy(m3)
+```
+
+Si se provee el argumento `x` a la función, entonces divide los datos en
+dos partes, y con una parte estima el modelo (training) y con la otra
+(test) calcula el error.
+
+# Modelos ARIMA
+
+Los modelos más comunes de series de tiempo son conocidos como **modelos
+ARIMA**, que significa: [Autoregresive, Integrated, Moving
+Average]{style="color:red;"}. Estos modelos describen *series
+estacionarias*.
+
+Estos modelos fueron propuestos en los 70's por George Box y Gwilym
+Jenkins y son esenciales para entender otros modelos mucho más
+complicados que se utilizan en la práctica, como los modelos ARCH y
+GARCH, los modelos de espacio de estados, los modelos de cadenas de
+Markov ocultos, los modelos dinámicos lineales, etc.
+
+## Metodología de Box-Jenkins
+
+La metodología se divide en 4 fases: Lo dividiremos en 4 fases:
+
+I. **Identificación:** preparación de los datos y selección del modelo.
+Utiliza los datos históricos para identificar un modelo apropiado.
+
+II. **Estimación:** estima los parámetros de modelos potenciales y
+    selecciona el mejor modelo.
+
+III. **Diagnósticos:** se utilizan varios diagnósticos para evaluar si
+     el modelo es adecuado.
+
+IV. **Aplicación:** se usa el modelo para hacer pronósticos y otros
+    estudios.
+
+Las primeras dos fases pueden repetirse si los diagnósticos indican que
+los modelos no son adecuados.
+
+### Ejemplo. Datos de Kleenex
+
+Para conocer el margen de mercado que tiene Kimberly-Clark con la marca
+kleenex, se le han pedido su producción semanal, que reporta para las
+120 semanas anteriores a ésta y en unidades de 10,000 paquetes. Se
+requiere un modelo para analizar su comportamiento y hacer un pronóstico
+para saber si no está inundando el mercado.
+
+```{r}
+kleenex <- read.table(file = "../data/kleenex.txt") # lee los datos
+kleenex <- ts(kleenex, start = 1, freq = 52) # convierte a una serie con frecuencia semanal.
+plot(kleenex, main = "Valores originales de la serie", xlab = "Tiempo", ylab = "paquetes de kleenex")
+```
+
+Lo primero a investigar es si la serie es estacionaria. Si no lo es, se
+pueden tomar diferencias de las observaciones
+
+```{r}
+dkleenex <- diff(kleenex, differences = 1)
+head(dkleenex)
+plot(dkleenex, main = "Primeras diferencias de la serie de kleenex", 
+     xlab = "tiempo",
+     ylab = expression(y[t]-y[t-1]))
+abline(h=0)
+```
+
+A veces es necesario tomar varias diferencias para volver la serie
+estacionaria.
+
+```{r}
+d2kleenex <- diff(kleenex,differences = 2)  # genera las segundas diferencias
+head(d2kleenex)
+plot(d2kleenex, main = "Segundas diferencias de la serie de kleenex", 
+     xlab = "tiempo",
+     ylab = expression((1-L^2)*y[t]))
+abline(h=0)
+```
+
+Una forma más formal de verificar que una serie es estacionaria es
+calcular las **funciones de autocorrelación** y **autocorrelación
+parcial**. Del mismo modo se pueden considerar las pruebas de
+Dickey-Fueller o Phillis-Perron.
+
+El coeficiente de autocorrelación de orden $k$ describe cuál es la
+relación que hay entre valores de la serie de tiempo que están separados
+por $k$ periodos
+
+$$r_k = \frac{\sum_{t=k+1}^n(y_t-\bar{y})(y_{t-k}-\bar{y})}{\sum_{t=1}^n(y_t-\bar{y})^2} = \frac{\hat{\gamma}_k}{\hat{\gamma}_0}$$
+
+donde $\hat{\gamma}_k$ es la covarianza estimada entre $y_t$ y
+$y_{t-k}$, y $\hat{\gamma}_0$ es la varianza estimada de la serie.
+
+$r_1$ indica cómo se relacionan valores sucesivos de $y_t$ entre sí;
+$r_2$ indica cómo se relacionan valores $y_t$ que están separados por
+dos periodos, etc.
+
+La gráfica de $r_k$ vs. $k$ se conoce como \emph{correlograma}, y es una
+gráfica de la función de autocorrelación.
+
+```{r}
+acf(kleenex) # tipica forma de una serie no estacionaria
+acf(dkleenex) # acf de la primera diferencia mejora
+acf(d2kleenex) # no se ve mucho cambio con la anterior.
+```
+
+Las *autocorrelaciones parciales* se usan para medir el grado de
+asociación entre $y_t$ y $y_{t-k}$, cuando se ha eliminado el efecto de
+los rezagos intermedios $1,2,3,\ldots,k-1$.
+
+El coeficiente de autocorrelación parcial de orden $k$ se denota por
+$\alpha_k$ y se calcula haciendo la regresión de $y_t$ contra los
+rezagos $y_{t-1},\ldots,y_{t-k}$:
+
+$$y_t = \alpha_0 + \alpha_1 y_{t-1} + \cdots + \alpha_k y_{t-k}$$
+
+La función de autocorrelación parcial es la grafica de $\alpha_k$ vs.
+$k$.
+
+```{r}
+# Para la serie de Kimberly, por ejemplo, podemos ver los dos casos, con la serie original y la serie diferenciada.
+layout(matrix(c(1,1,2,2,3,4,5,6),nrow=2,byrow=T))
+		plot(kleenex, main = "Serie kleenex original")
+		plot(dkleenex, main = "Serie kleenex diferenciada")
+		acf(kleenex)
+		pacf(kleenex)
+		acf(dkleenex)
+		pacf(dkleenex)
+```
+
+### Ejemplo: ruido blanco
+
+Un modelo en el que cada observación se compone de dos partes, un nivel
+constante $c$ y un componente de error $\epsilon_t$ que es independiente
+de cualquier periodo,
+
+$$ y_t = c + \epsilon_t $$
+
+se le llama \emph{ruido blanco}.
+
+Este modelo puede ser \emph{simulado} usando un generador de números
+aleatorios normales, como la función {\tt rnorm} en {\tt R}. Sirve para
+comparar cómo serían los correlogramas de los mejores modelos.
+Usualmente los residuales de un modelo deberían comportarse como ruido
+blanco
+
+```{r}
+x <- rnorm(1000,mean=5, sd=10)
+layout(matrix(c(1,1,2,3),nrow=2,byrow=T))
+plot.ts(x)
+acf(x)
+pacf(x)
+```
+
+Por ejemplo, para los residuales del modelo de Holt-Winters
+
+```{r}
+x <- m2$residuals
+layout(matrix(c(1,1,2,3),nrow=2,byrow=T))
+plot.ts(x)
+acf(x)
+pacf(x)
+```
+
+## Modelos AR y MA
+
+Un modelo autorregresivo de orden $p$, que se denota por $AR(p)$ es un
+modelo de la forma:
+
+$$ y_t = \phi_0 + \phi_1 y_{t-1} + \phi_2 y_{t-2} + \cdots + \phi_p y_{t-p} + \epsilon_t $$
+
+done $\epsilon_t \sim N(0,\sigma^2_{\epsilon})$, y los errores son
+independientes.
+
+En este modelo los predictores de la observación $y_t$ son sus propios
+rezagos en el tiempo.
+
+Los modelos $AR$ pueden ser estacionarios o no estacionarios,
+dependiendo de las restricciones que se impongan sobre los pesos del
+modelo.
+
+Un modelo de promedios móviles de orden $q$ es un modelo de la forma:
+
+$$y_t = \theta_0 + \theta_1 \epsilon_{t-1} + \theta_2 \epsilon_{t-2} + \cdots + \theta_q \epsilon_{t-q} + \epsilon_t $$
+donde $\{\epsilon_t\}$ es una serie de ruido blanco.
+
+A este proceso se le llama promedio móvil porque es una especie de
+promedio móvil en la serie $\{\epsilon_t\}$, con pesos dados por los
+coeficientes $\theta\_1,\theta\_2,\ldots, \theta\_q$.
+
+### Ejemplo de estimación de un modelo ARIMA
+
+Dada la falta de tiempo para ver en detalle las características de las
+funciones acf y pacf para identificar modelos, consideraremos un enfoque
+de *fuerza bruta* para ajustar los modelos y utilizar el criterio de
+Akaike para seleccionar el modelo.
+
+Podemos considerar ajustar todos los modelos para las combinaciones de
+valores $p,d,q$ en los conjuntos $p \in \{0,1,2,3,4\}$,
+$d\in \{0,1,2\}$, y $q \in \{0,1,2,3,4\}$.
+
+Sin embargo, este método no funcionará para series con un fuerte
+componente estacional. En caso de contar con componente estacional se
+recomienda primero eliminar la estacionalidad con los métodos vistos
+previamente.
+
+También se pueden extender los modelos a modelos
+SARIMA($p,d,q$)($P,D,Q$), que contemplan un componente estacional, pero
+esos modelos son más complicados y no se verán aquí.
+
+```{r}
+# Ajuste por fuerza bruta de los datos de kleenex
+AIC <- array(NA, dim=c(4,2,4), dimnames = list(paste("p=",0:3), paste("d=",0:1), paste("q=",0:3)))
+for(p in 1:4) 
+  for(q in 1:4)	
+    for(d in 1:2) AIC[p,d,q] <- arima(kleenex, order = c(p-1,d-1,q-1))$aic
+	AIC[,1,]
+	AIC[,2,]
+```
+
+El modelo que mejor ajusta estos datos está dado por el caso con el
+*menor* AIC, que corresponde a los valores $p=3$, $d=1$ y $q=2$,
+sugiriendo un ajuste de la forma ARIMA($3,1,2$). No es muy distinto al
+valor que se tiene para el modelo con $p=0,d=1,q=1$ que también puede
+ser un buen candidato.
+
+Entonces los modelos que se pueden proponer para valorar en los
+diagnósticos son los modelos ARIMA($3,1,2$) y ARIMA($0,1,1$).
+Usualmente, si se tienen dos o más modelos que no difieren mucho en la
+calidad del ajuste, siempre se escoge el más sencillo. Este es el
+*principio de parsimonia*.
+
+```{r}
+mod1 <- arima(kleenex, order = c(3,1,2)); mod1
+mod2 <- arima(kleenex, order = c(0,1,1)); mod2
+tsdiag(mod1)
+tsdiag(mod2)
+```
+
+Los pronósticos se hacen de la siguiente manera:
+
+```{r}
+pron2 <- predict(mod2,n.ahead = 12)  # Haz una predicción de 12 periodos.
+pron2
+ts.plot(kleenex, pron2$pred, pron2$pred +2*pron2$se,pron2$pred -2*pron2$se)
+```
+
+## Pruebas de estacionariedad: Dickey-Fuller
+
+Es importante probar formalmente que una serie es estacionaria,
+particularmente en econometría. Las pruebas de estacionariedad se
+conocen como *prueba de raíz unitaria*. La prueba de Dickey-Fuller es
+una prueba de este tipo.
+
+La prueba consiste en estimar la regresión:
+
+$$\Delta y_t = \phi y_{t-1} +\beta_1\Delta y_{t-1} + \beta_2 \Delta y_{t-2} + \cdots + \beta_p \Delta y_{t-p} + u_t $$
+donde $u_t$ es un componente de error que se supone tiene media 0.
+
+Si la serie no es estacionaria, entonces se espera que
+$\hat{\phi}\approx 0$. Si la serie es estacionaria, entonces
+$\hat{\phi} <0$.
+
+Como los errores de este modelo están correlacionados, los supuestos
+típicos de regresión lineal no se cumplen, por lo que hay que probar la
+hipótesis $H_0:\phi=0$ vs. $H_a:\phi<0$ utilizando una prueba diferente
+a la prueba de $t$ que se usa en regresión normal.
+
+La prueba se puede obtener con la función `df.test` en el paquete
+`tseries` de R.
+
+```{r}
+library(tseries)
+adf.test(kleenex) #no se rechaza la hipótesis nula, por lo que no es estacionaria
+adf.test(dkleenex, k = 1) # se rechaza H0, la serie es estacionaria
+adf.test(d2kleenex, k = 0) # la serie es estacionaria
+```

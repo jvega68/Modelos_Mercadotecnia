@@ -1,0 +1,210 @@
+---
+title: "Clusters"
+author: "Jorge de la Vega"
+date: "4/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(cluster)
+library(factoextra) # visualización de funciones
+library(tidyverse)
+library(corrplot)  #matrices de correlación
+```
+
+# Ejemplos para seguir las notas.
+
+En este laboratorio utilizaremos los datos de la ENIGH 2020 por eentidad federativa. Las variables que están disponibles son las siguientes. Todos los datos de dinero son trimestrales:
+
+-   `entidad`: Entidad de la República Mexicana.
+-   `edad`: Edad promedio del o de la jefa del hogar
+-   `poblacion`: total de hombres y mujeres adultas.
+-   `hombres`: número total de hombres
+-   `mujeres`: número total de mujeres
+-   `deudas`: pago promedio de deudas de los miembros del hogar a la empresa donde trabajan y/o a otras personas o instituciones.
+-   `salud`: gasto promedio en cuidados de salud
+-   `gasto`: gasto corriente monetario promedio
+-   `ingreso`: ingreso corriente promedio
+-   `beneficios`: ingreso por beneficios gubernamentales promedio
+-   `ahorro`: depósitos promedio en cuentas de ahorro, tandas, cajas de ahorro, etc.
+-   `pago_tarjeta`: pago promedio a tarjetas de crédito
+-   `bebidas`: gasto promedio en bebidas alcohólicas y no alcohólicas
+
+```{r}
+enigh20 <- read.csv(file.choose())
+# Pasa los nombres de las entidades como nombres de los renglones y quita la columna
+row.names(enigh20) <- enigh20$entidad
+enigh20$entidad <- NULL
+```
+
+Hacemos algunas transformaciones para simplificar los datos.
+
+```{r}
+enigh20$hombres <- round(100*enigh20$hombres/enigh20$poblacion,2)
+enigh20$mujeres <- round(100*enigh20$mujeres/enigh20$poblacion,2)
+enigh20$poblacion <- NULL # Quitamos población porque es redundante
+```
+
+Cuando los aributos tienen diferentes magnitudes, es recomendable estandarizar los datos.
+
+```{r}
+enigh20 <- scale(enigh20) #normaliza los datos (resta media y divide entre desviación estandar)
+```
+
+## Distancia y Similitud
+
+```{r}
+# matriz de distancias euclideanas
+d1 <- dist(enigh20)  # por default es euclideana
+d2 <- dist(enigh20, method = "canberra")
+d3 <- dist(enigh20, method = "minkowski")
+# distancia basada en correlación
+d4 <- get_dist(enigh20,method = "pearson")
+# Podemos visualizar las distancias
+fviz_dist(d2)
+# disimilaridad basada en la métrica de Gower
+d5 <- daisy(enigh20, metric = "gower")
+# Convierte distancia a similitud
+c1 <- 10000/(1+d1)
+c2 <- round((max(d1)-d1)/max(d1),2)
+```
+
+¿Qué estados son menos parecidos en función de las variables dadas? ¿Cuáles son los pares de ciudades más parecidos?
+
+**Ejemplo de distancias en términos de atributos.**
+
+Consideremos un ejercicio para ver la similitud por atributos. Consideremos la similitud de los estados en función de las letras que forman sus nombres.
+
+```{r}
+tieneletra <- function(x,letra){
+  ifelse(length(which(unlist(strsplit(tolower(x),"")) ==letra))>0,1,0)
+}
+entidades <- row.names(enigh20)
+nombres <- data.frame(a = sapply(entidades,tieneletra,letra = "a"),
+                      b = sapply(entidades,tieneletra,letra = "b"),
+                      e = sapply(entidades,tieneletra,letra = "e"),
+                      i = sapply(entidades,tieneletra,letra = "i"),
+                      o = sapply(entidades,tieneletra,letra = "o"),
+                      u = sapply(entidades,tieneletra,letra = "u"))
+d6 <- dist(nombres, "binary")
+fviz_dist(d6)
+```
+
+## Métodos de conglomerados jerárquicos
+
+La función `agnes` realiza \_agglomerative nesting: agrupa partiendo de cada caso hasta agrupar todo.
+
+```{r}
+# se realiza sobre los datos originales
+agnes1 <- agnes(enigh20, metric = "euclidean", method = "complete", diss = F)
+agnes1$ac # agglomerative coefficient. cercano a 1 indica una mejor agrupación.
+plot(agnes1, which.plots = 2)
+fviz_dend(agnes1, k = 3, type = "rectangle", rect = T)  # define un número de grupos para cotar el dedrograma
+# Si se tiene la mtriz de distancias
+agnes2 <- agnes(d2, method = "complete", diss = T)
+agnes2$ac
+fviz_dend(agnes2, k = 5, type = "circular")  # define un número de grupos para cortar el dendrograma
+```
+
+Otra función es `diana` que realiza *divised analysis* que es lo opuesto a agnes: parte del total hasta llegar a cada caso.
+
+```{r}
+diana1 <- diana(enigh20,metric = "euclidean", diss = F)
+diana1$dc # coeficiente divisivo. Cercano a 1 es indicación de buena segmentación
+fviz_dend(diana1,k = 5)
+# Otra gráfica alternativa
+pltree(diana1, main = "dendrograma de Diana")
+rect.hclust(diana1, k = 4)
+cutree(diana1,4) # devuelve vector de pertenencia
+w <- cutree(diana1,4) # devuelve vector de pertenencia
+names(w) <- diana1$order.lab
+```
+
+Otra función que hace cluter jeráŕquico es `hclust`. Esta funcion no pertenece a ningún paquete y forma parte de las funciones normales de R.
+
+```{r}
+h1 <- hclust(d2, method = "complete")
+plot(h1)
+cutree(h1,4) # muestra los grupos. 
+```
+
+### Ejemplo: Posicionamiento de marca
+
+Ejemplo de acuerdo a las notas. Los datos tienen los scores que califican 9 atributos de 10 marcas. Las calificaciones van de 1 a 10 para cada atributo de cada marca.
+
+```{r}
+ratings <- read.csv("../data/brands8.csv")
+summary(ratings)
+```
+
+En este caso no es necesario estandarizar los datos, pero se puede hacer de cualquier manera. Aquí se hará el análisis sin escalar los datos.
+
+```{r}
+corrplot(cor(ratings[,-10]), method = "ellipse", tl.cex= 0.7)
+corrplot(cor(ratings[,-10]), order = "hclust", method = "ellipse", tl.cex = 0.7)
+```
+
+Para poder ver el efecto de cada marca, obtenemos el rating promedio de los 100 clientes para cada una de ellas
+
+```{r}
+ratings_prom <- ratings %>%
+                group_by(brand) %>%
+                summarise_all(mean) %>%
+                as.data.frame()
+row.names(ratings_prom) <- ratings_prom$brand
+ratings_prom$brand <- NULL
+```
+
+```{r}
+heatmap(as.matrix(ratings_prom), Rowv = NA, main = "Atributos de marca")
+```
+
+Podemos intentar con los agregados hacer una gráfica de componentes principales para ver el posicionamiento de las marcas.
+
+```{r}
+ratings_prom_pc <- princomp(ratings_prom, cor = T)
+summary(ratings_prom_pc, loadings = T)
+fviz_pca(ratings_prom_pc)
+```
+
+## Conglmerados no jerárquicos
+
+### K-medias
+
+Hay varios algoritmos que desarrollan k-medias. Es importante fijar una semilla aleatoria inicial, porque la elección de los centros iniciales es aleatoria.
+
+Primero determinamos cuántos clusters pueden ser óptimos:
+
+```{r}
+fviz_nbclust(enigh20, kmeans, method = "wss")
+```
+
+`nstart` indica cuántos conjuntos aleatorios deben tomarse, cuando se provee un número de centros (clusters). Esto significa que se intentarán `nstart` diferentes asignaciones iniciales y se seleccionan los mejores resultados
+
+```{r}
+set.seed(10) # fija la semilla por reproducibilidad
+km1 <- kmeans(enigh20,centers = 4, nstart = 50)
+km1
+fviz_cluster(km1, 
+             data = enigh20, 
+             ellipse.type = "euclid", 
+             star.plot = F, 
+             repel = T,
+             ggtheme = theme(legend.position = "bottom"))
+```
+
+¿Es sensible al orden de los datos? podría ser que sí:
+
+```{r}
+e2 <- enigh20[sample(1:33,33,replace = F),]
+set.seed(10) # fija la semilla por reproducibilidad
+km1 <- kmeans(e2,centers = 4, nstart = 50)
+km1
+fviz_cluster(km1, 
+             data = e2, 
+             ellipse.type = "euclid", 
+             star.plot = T, 
+             repel = T,
+             ggtheme = theme(legend.position = "bottom"))
+```

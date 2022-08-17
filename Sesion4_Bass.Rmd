@@ -1,0 +1,286 @@
+---
+title: 'Clase 4: Modelo de difusión de Bass'
+author: "Jorge de la Vega"
+date: "21/10/2021"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NULL, fig.align = "center")
+```
+
+# Introducción
+
+- El modelo de Bass sirve para pronosticar ventas futuras de productos nuevos.A este proceso se le conoce como *difusión* 
+- Esto es muy importante cuando los productos requieren fuertes inversiones e investigación, como los medicamentos o los productos tecnológicos.
+- Antes de estudiar el modelo de Bass, se introducirá el concepto de curva S para predecir cuando un producto será adoptado cuando ya tiene tiempo en el mercado. Cuando se grafica tiempo vs el porcentaje acumulada de ventas, los nuevos productos tienen un comportamiento en forma de S, asociado con el ciclo del producto. Esta curva es similar a la de una función de distribución continua.
+
+Como un ejemplo: si consideramos una población de 100 personas que son posibles adoptadores de un producto nuevo, y el tiempo $t$ que tarda cada persona en adoptar el producto tiene una distribución normal, con una media de 5 años y una desviación estándar de 1.25 años, $t \sim N(5,1.25)$ la curva se verá como la siguiente.
+
+```{r}
+set.seed(100)  # fija una semilla para poder reproducir los resultados
+t <- round(rnorm(100, mean = 5, sd = 1.25),2)
+(y <- sort(t)) # tiempos ordenados
+adoptadores <- Vectorize(function(x) sum(y < x)/100)  # cuenta las observaciones que están abajo del tiempo t
+tiempos <- seq(1,10,by=0.2)                           # genera una secuencia de tiempos
+adoptadores(tiempos)                                  # evalúa cuantos adoptadores se tienen hasta el tiempo t. 
+plot(tiempos, adoptadores(tiempos),
+     main = "Ejemplo de curva S",
+     xlab="tiempo de adopción", 
+     ylab = "% adopciones",
+     type = "o", pch = 16, cex = 0.4)
+rug(t)                                                # añade los puntos en el eje x
+```
+
+Noten que la curva no es otra cosa que la **función de distribución empírica** de los tiempos de adopción, para una muestra que abarca a toda la población. la misma gráfica se puede hacer de la siguiente manera:
+
+```{r}
+plot(ecdf(t),cex=0.5)
+```
+
+- Una de las características más importantes de las curvas S es su **punto de inflexión** que corresponde al punto del tiempo cuando la tasa de ventas que es creciente comienza a decrecer (o cuando la segunda derivada de la curva es 0).
+
+# Ajustando una curva logística o curva de Pearl
+
+- Usualmente se usa la **curva logística** o **curva de Pearl** para modelar la difusión de un producto: si $x(t)$ representa el porcentaje de adoptadores en $t$, la curva logística es de la forma:
+
+$$ x(t) = \frac{L}{1+ae^{-bt}} $$
+
+donde los parámetros de la curva a estimar son $a$, $b$ y $L$. El valor $L$ es el límite al que se acercan los adaptadores acumulados cuando $t \rightarrow \infty$. Los parámetros $a$ y $b$ determinan la pendiente de la curva $S$. 
+
+El punto de inflexión de la curva ocurre cuando $x''(t)=0$, que nos da después de un montón de álgebra $t=log(a)/b$ que corresponde a $x(log(a)/b) = b/2$.
+
+Para estimar los parámetros de la curva con el ejemplo que dimos al principio. Podemos usar la función `nls` que sirve para ajustar mínimos cuadrados no lineales
+
+```{r}
+logistica <- function(x,a,b,L) L/(1+a*exp(-b*x)) # definimos la función que queremos estimar
+
+modelo <- nls(y ~ logistica(x, a, b, L), 
+              data = list(x=tiempos, y = adoptadores(tiempos)), 
+              start = list(L = 1, a = 0.5, b = 0.5), trace = T)
+summary(modelo)
+plot(tiempos,modelo$m$fitted(),type = "l", col = "red",lwd=2) # grafica la función ajustada
+points(tiempos,adoptadores(tiempos)) # añade los puntos de los datos
+```
+### Ejemplo 1 con datos reales: 
+
+Consideremos los suscriptores de celulares por cada 100 personas. Supongamos que queremos un pronóstico para los próximos 5 años (de 2021 a 2025).
+
+```{r}
+año <- 2010:2020
+cels100 <- c(15,19,22,26,32,42,53,64,74,80,86)
+m2 <- nls(y ~ logistica(x,a,b,L),
+          data = list(x = año-2009, y = cels100), trace =T,
+          start = list(L=100, a=20, b=0.5))
+summary(m2)
+plot(año,cels100)
+predict(m2,list(x=2021:2025-2009)) # obten predicciones para los nuevos años
+# Grafica el pronóstico
+plot(c(año,2021:2025),c(cels100,predict(m2,list(x=2021:2025-2009))),
+     col = c(rep("black",10),rep("red",6)))
+# Obtención del Punto de inflexión:
+params <- m2$m$getPars()
+(punto_inflexion = log(params["a"])/params["b"])
+```
+
+- El valor de $L=118.17$ se interpreta como el número de teléfonos que a largo plazo tendrán 100 personas. 
+- El punto de inflexión se alcanza después de 7.67 años. Entonces el punto de inflexión ocurrió en 2017.
+
+### Ejemplo 2: ventas de ipods
+
+En este ejemplo consideramos un patrón estacional en los datos. Los datos corresponden a las ventas de ipods en el periodo de 2002 a 2006.
+
+- Primero ajustamos un modelo de descomposición multiplicativo para poder obtener los factores estacionales
+- Estos factores estacionales deben incorporarse en la curva S que se quiere estimar.
+- Siempre hay que explorar cuáles son los valores iniciales adecuados. Ensayo y error y no siempre es fácil.
+
+```{r}
+# ventas en millones de unidades
+ventas <- c(0.216,0.16,0.467,0.4,0.88,0.807,0.86,2,4.6,5.3,6.2,6.4,14,8.5,8.1)
+# población (millones)
+pob <- c(290,290.8,291.5,292.3,293,293.8,294.5,295.3,296,296.8,297.5,298.3,299,299.8,300.5)
+plot(100*ventas/pob, xlab = "trimestre", ylab = "ventas por 100", type = "b")
+
+# Se estiman los componentes estacionales
+y <- ts(100*ventas/pob,start=c(2002,4),freq = 4)
+S <- as.vector(decompose(y,"multiplicative")$seasonal)
+
+# Define la función a estimar:
+logistica <- function(x,a,b,L) S*L/(1+a*exp(-b*x)) # definimos la función que queremos estimar
+
+k <- length(ventas)  # números de trimestres
+modelo <- nls(y ~ logistica(x, a, b, L), 
+              data = list(x = 1:k, y = 100*ventas/pob), 
+              start = list(L = 3, a = 100, b = 1), trace = T)
+
+summary(modelo)
+plot(1:k, modelo$m$fitted(),type = "l", col = "red",lwd=2) # grafica la función ajustada
+points(1:k, 100*ventas/pob ) # añade los puntos de los datos
+```
+
+# Curva de Gompertz
+
+Un modelo alternativo es estimar una curva de Gompertz: $x(t) = ae^{-ce^{-bt}}$. Aquí los puntos a notar son los siguientes:
+
+- Conforme $t \rightarrow \infty$, $x(t) \rightarrow a$.
+- Esta curva tiene punto de inflexión en $t= log(c)/b$ y $x(t) = a/e$. 
+
+El procedimiento de ajuste es parecido al que seguimos previamente para la curva logística. Seguiremos sólo un ejemplo.
+
+```{r}
+gompertz <- function(x,a,b,c) a*exp(-c*exp(-b*x)) # definimos la función que queremos estimar
+modelo <- nls(y ~ gompertz(x, a, b, c), 
+              data = list(x = tiempos, y = adoptadores(tiempos)), 
+              start = list(a = 10, b = 0.5, c = 1), trace = T)
+summary(modelo)
+plot(tiempos,modelo$m$fitted(),type = "l", col = "red",lwd=2) # grafica la función ajustada
+points(tiempos,adoptadores(tiempos)) # añade los puntos de los datos
+```
+
+
+¿Cómo decidir qué modelo usar? En este problema, nos interesa la capacidad de pronosticar correctamente, no en el ajuste de los datos. La regla definida por Joseph Martino ( _Technological Forecasting for Decision Making_ Mc-Graw Hill, 1993) es:
+
+- Si la verosimilitud de adopciones futuras incrementa con el número de adopciones previas, usar la curva logística. En otro caso, usar la curva de Gompertz.
+
+Ejemplos:
+
+1. ¿adopción de TV por cable?
+2. ¿adopción de celulares?
+3. ¿Autos autodirigidos?
+4. ¿Turismo espacial?
+
+# Modelo de difusión de Bass
+
+- El modelo de Bass se utiliza antes de que un producto se coloque en el mercado, a diferencia de los modelos previos, que asumen que el producto ya tiene tiempo en el mercado.
+- Asume que la difusión de un nuevo producto es definida por dos tipos de personas:
+  
+  - Los innovadores: son las personas que buscan nuevos productos sin que les importe si otras personas lo hacen.
+  - Los imitadores:  son las personas que esperan antes de adquirir un nuevo producto hasta que otros lo han usado de manera exitosa. 
+  
+- El modelo de Bass sirve para determinar la importancia relativa de innovadores e imitadores  en la difusión del producto. 
+- Consideramos las siguuientes definiciones
+  
+  - $n(t)$ son las ventas de productos en el tiempo $t$.
+  - $N(t)$ son las ventas acumuladas de productos hasta el tiempo $t$
+  - $K$ es el número target de clientes en el mercado. Se supone que eventualmente todos adoptarán el producto
+  - $P$ es el coeficiente de innovación o influencia externa
+  - $Q$ coeficiente de imitación o influencia interna
+  
+- El modelo de Bass define la siguiente relación:
+
+$$ n(t) = P(K - N(t-1)) + \frac{Q}{K}\frac{(K-N(t-1))}{N(t-1)}$$
+ 
+Si consideramos $F(t) = N(t)/K$ como la probabilidad acumulada de compra en el intervalo $(0,t)$ y $f(t) = F'(t)$, la ecuación anterior que es una versión discretizada de la siguiente, se puede escribir como:
+
+$$ \frac{f(t)}{1-F(t)} = P + QF(t)$$
+
+La razón $f(t)/(1-F(t))$ es la tasa de compra en el tiempo $t$, dado que no hay compras hasta ahora, y $F(t)$ es la intensidad de adopción.
+
+
+Para resolver el modelo se escribe $f(t) = dF/dt$ y notamos que $F(0)=0$. Entonces:
+
+$$ \frac{dF}{dt} = (P+QF)(1-F) = P + (Q-P)F-QF^2 $$
+$$ \int \frac{dF}{P + (Q-P)F-QF^2} = \int dt$$
+$$ \frac{log(P+QF)-log(1-F)}{P+Q} = t + c$$
+como $t=0$ es $F(0)=0$, se tiene que la constante $c$ es $c= \frac{log(P)}{P+Q}$ y finalmente, resolviendo para $F(t)$:
+
+$$ F(t) = \frac{P(e^{(P+Q)t}-1)}{Pe^{(P+Q)t} + Q}$$
+
+De aquí obtenemos para $f(t)$:
+
+$$ f(t) = \frac{e^{(P+Q)t}P(P+Q)^2}{[Pe^{(P+Q)t} + Q]^2}$$
+
+- Si el target de mercado es de tamaño $K$, entonces en cada $t$, las adopciones son $Kf(t)$
+
+## Ejemplo
+
+Para un valor de $K=100000$, y suponiendo que $P=0.01$ y $Q=0.2$
+
+```{r}
+f <- function(P,Q,t)(exp((P+Q)*t)*P*(P+Q)^2)/(P*exp((P+Q)*t)+Q)^2
+tiempo <- seq(1,20)   # periodos a simular
+K <- 100000
+P = 0.01
+Q = 0.2
+plot(tiempo, K*f(P,Q,tiempo), type="l", lwd=2,xlab = "tiempo (años", ylab = "Adopciones")
+```
+
+## Estimación de $P$ y $Q$
+
+Utilizando la ecuación que definimos al principio: $n(t) = P(K - N(t-1)) + \frac{Q}{K}\frac{(K-N(t-1))}{N(t-1)}$, podemos estimar los parámtros.
+$$ n(t) = [P+QN(t)/K][K-N(t)] = \beta_0 + \beta_1N(t) + \beta_2N(t)^2 $$
+donde $\beta_0 = PK$,$\beta_1 = Q-P$ y $\beta_2 = -Q/K$.
+
+La ecuación anterior se puede estimar como una regresión de las ventas vs. las ventas acumuladas. Con los coeficientes estimados $\beta_0$, $\beta_1$ y $\beta_2$, las ecuaciones anteriores se puden invertir para determinar los valores de $K$, $P$ y $Q$:
+
+$$ K = \frac{-\beta_1\pm \sqrt{\beta_1^2-4\beta_0\beta_2}}{2\beta_1}, \quad P = \beta_0/K, \quad Q = -K\beta_2$$
+
+### Ejemplo: ventas de iPhone
+
+Los datos son ventas trimestrales de Iphone que se obtiene de [Statista](http://www.statista.com/statistics/263401/global-apple-iphone-sales-since-3rd-quarter-2007/)
+```{r}
+y <- read.delim("../data/iphone_sales.txt",sep = "")
+(nt <- ts(y$Sales_MM_units,start=c(2007,3), freq = 4))
+(Nt <- cumsum(nt)) # ventas acumuladas
+(Nt2 <- Nt^2)
+regresion <- lm(nt ~ Nt + Nt2)  # ajuste del modelo de regresión 
+summary(regresion)   
+b <- regresion$coefficients  # obten los valores de las betas
+(K1 <- (-b[2] + sqrt(b[2]^2 - 4*b[1]*b[3]))/(2*b[3]))
+(K2 <- (-b[2] - sqrt(b[2]^2 - 4*b[1]*b[3]))/(2*b[3]))
+(K <- max(K1,K2))
+P <- b[1]/K
+Q = -K*b[3]
+```
+
+Ahora graficamos el modelo ajustado:
+
+```{r}
+no_periodos <- 100
+t <- seq(0,no_periodos)
+plot(t,K*f(P,Q,t), type = "l", ylab="Unidades trimestrales (MM)", main = "Venta de Iphones", ylim =c(0,80))
+lines(1:length(nt),as.vector(nt), col = "red",lty=2)
+```
+
+Entonces los coeficientes para los iphones son $P=0.0018$ y $Q=0.115$. En el paper original de Bass hay otras estimaciones:
+
+![Tabla de Bass](../images/BassTable.png)
+
+## Picos de ventas
+
+Con el modelo de Bass, se pueden obtener los tiempos en los que las adopciones alcanzan sus máximos. Si se toma la derivada de $f(t)$ con respecto a $t$, se obtiene que $t^* = \frac{-1}{P+Q}log(P/Q)$ Para el caso de los iphones:
+
+```{r}
+(t_opt <- -1/(P+Q)*log(P/Q))
+```
+
+### Ejercicio
+
+Apliquen el modelo de difusión de Bass a los datos de ventas globales de teléfonos Galaxy de Samsung que están en el archivo `galaxy_sales.csv`que se encuentra en la página de datos del curso.
+
+## Uso del modelo de Bass
+
+- Es difícil predecir las ventas de un nuevo producto antes de su salida al mercado. Una manera de resolver el tema es fijarse en un producto o industria similar
+- Los productos similares o industrias similares  se conocen como **industrias/categorías adyacentes**. Se pueden usar los valores de $P$ y $Q$ y un target $K$ para un nuevo producto. 
+
+## Modificaciones al modelo de Bass
+
+Se han hecho varias actualizaciones al modelo de Bass que es importante por lo menos tener la idea de ellas:
+
+- Dado el crecimiento de la población, el tamaño del mercado puede crecer con el tiempo. Para tomar en cuenta el tamaño del mercado, se puede asumir que la población objetivo $K$ crece con el tiempo, asumiendo una forma funcional, por ejemplo $K(t) = K(0)(1.05)^t$.
+
+- Cambiando el nivel del precio de un producto o el nivel de publicidad tiene impacto en el nivel de ventas. El modelo de Bass se puede generalizar para incorporar los efectos del precio  y publicidad en las ventas haciendo que $P$ y $Q$ dependan del precio y de la publicidad. Del mismo modo, $P$ y $Q$ se pueden hacer dependientes del tiempo. 
+
+- Para muchos productos (autos, refris, celulares), los clientes pueden regresar al mercado y comprar el producto de nuevo. Esto puede afectar entonces el valor de $K(t)$ para que incluya a las personas que renuevan cada cierto tiempo.
+
+- Para datos mensuales o trimestrales, se puede incorporar estacionalidad, como en el caso de las curvas de Gompertz o logística.
+
+# Referencias:
+
+- Mahalan, Vijay & Eitan Muller & Yoram Wind (2001). _New-Product Difussion Models_. Springer.
+- Bass, Frank. (1969). “A New Product Growth Model for Consumer Durables,” _Management Science_ 16, 215–227.
+- Bass, Frank., Trichy Krishnan, and Dipak Jain (1994). “Why the Bass Model Without Decision Variables,” Marketing Science 13, 204–223.
+- Boatwright, Lee., and Wagner Kamakura (2003). “Bayesian Model for Prelaunch Sales Forecasting of Recorded Music,” _Management Science_ 49(2), 179–196.
